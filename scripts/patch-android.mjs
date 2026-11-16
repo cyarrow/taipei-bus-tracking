@@ -1,7 +1,8 @@
 // 修改 Capacitor 產生的 Android 專案：
 // 1. 權限：定位（附近站牌、步行時間）、安裝套件（App 內更新）
 // 2. 加入 ApkUpdater 原生外掛並在 MainActivity 註冊
-// 3. 固定簽章：明確指定 repo 內的 keystore，新版 APK 才能覆蓋安裝
+// 3. 固定簽章：使用 CI 解密出的 keystore（ANDROID_KEYSTORE_FILE），新版 APK 才能覆蓋安裝
+//    本機開發沒有設定時，使用 Android 預設的 debug 簽章
 // 4. 版本號：versionCode 用 CI 的 build 編號，才能覆蓋安裝並判斷新舊
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -43,18 +44,19 @@ public class MainActivity extends BridgeActivity {
 const gradlePath = 'android/app/build.gradle';
 let gradle = readFileSync(gradlePath, 'utf8');
 
-// 3. 固定簽章
-if (!gradle.includes('signingConfigs')) {
+// 3. 固定簽章（密碼由環境變數 ANDROID_SIGNING_PASSWORD 提供，不寫進檔案）
+const keystore = process.env.ANDROID_KEYSTORE_FILE;
+if (keystore && !gradle.includes('signingConfigs')) {
   gradle = gradle
     .replace(
       /android \{/,
       `android {
     signingConfigs {
         fixed {
-            storeFile rootProject.file('../signing/debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
+            storeFile file('${keystore}')
+            storePassword System.getenv('ANDROID_SIGNING_PASSWORD')
+            keyAlias 'taipeibus'
+            keyPassword System.getenv('ANDROID_SIGNING_PASSWORD')
         }
     }`,
     )

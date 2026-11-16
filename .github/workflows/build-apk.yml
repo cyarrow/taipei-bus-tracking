@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_NUMBER: ${{ github.run_number }}
+      ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+      ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/release.keystore
     steps:
       - uses: actions/checkout@v5
 
@@ -32,6 +34,17 @@ jobs:
       - name: Build web app
         run: npm run build
 
+      # 用 Secret 密碼解密 repo 內加密的簽章檔；沒設定 Secret 就停止，避免產生無法覆蓋安裝的 APK
+      - name: Decrypt signing key
+        run: |
+          if [ -z "$ANDROID_SIGNING_PASSWORD" ]; then
+            echo "::error::請在 repo Settings → Secrets and variables → Actions 設定 ANDROID_SIGNING_PASSWORD"
+            exit 1
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 \
+            -in signing/release.keystore.enc -out "$ANDROID_KEYSTORE_FILE" \
+            -pass env:ANDROID_SIGNING_PASSWORD
+
       - name: Generate Android project
         run: |
           npx cap add android
@@ -42,11 +55,11 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      # 確認 APK 用的是 repo 內的固定簽章，否則無法覆蓋安裝
+      # 確認 APK 用的是固定簽章，否則無法覆蓋安裝
       - name: Verify signing certificate
         run: |
           APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          EXPECTED=$(keytool -list -v -keystore signing/debug.keystore -storepass android -alias androiddebugkey \
+          EXPECTED=$(keytool -list -v -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_SIGNING_PASSWORD" -alias taipeibus \
             | grep 'SHA256:' | head -1 | sed 's/.*SHA256: //; s/://g' | tr 'A-Z' 'a-z')
           ACTUAL=$("$APKSIGNER" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk \
             | grep 'SHA-256 digest' | head -1 | sed 's/.*: //')

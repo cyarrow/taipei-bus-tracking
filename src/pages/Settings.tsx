@@ -5,10 +5,7 @@ import { testCredentials, TdxError } from '../tdx';
 import {
   checkForUpdate,
   currentVersion,
-  fetchLatestRelease,
   isNative,
-  loadGithubToken,
-  saveGithubToken,
   UpdateError,
   type UpdateInfo,
 } from '../updater';
@@ -21,7 +18,6 @@ export default function Settings({ onDone }: { onDone: () => void }) {
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
   const [prefs, setPrefs] = useState(loadSettings);
   const [version, setVersion] = useState<string>();
-  const [ghToken, setGhToken] = useState(loadGithubToken);
   const [updateMsg, setUpdateMsg] = useState<{ ok: boolean; text: string }>();
   const [update, setUpdate] = useState<UpdateInfo>();
   const [checking, setChecking] = useState(false);
@@ -29,22 +25,6 @@ export default function Settings({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     currentVersion().then((v) => setVersion(v.build ? `${v.name}（第 ${v.build} 版）` : v.name));
   }, []);
-
-  const saveToken = async () => {
-    const t = ghToken.trim();
-    setChecking(true);
-    setUpdateMsg(undefined);
-    try {
-      await fetchLatestRelease(t);
-      saveGithubToken(t);
-      setUpdateMsg({ ok: true, text: '權杖驗證成功，已儲存' });
-      await check();
-    } catch (e) {
-      setUpdateMsg({ ok: false, text: e instanceof UpdateError ? e.message : '驗證失敗' });
-    } finally {
-      setChecking(false);
-    }
-  };
 
   const check = async () => {
     setChecking(true);
@@ -157,34 +137,10 @@ export default function Settings({ onDone }: { onDone: () => void }) {
         <p className="muted">目前版本：{version ?? '…'}</p>
         {isNative() ? (
           <>
-            <p className="muted">
-              新版本放在私人 GitHub repo，需要一組「只能讀取這個 repo」的 GitHub 權杖才能檢查與下載。
-              權杖只會儲存在這支手機上。設定後，App 每 3 小時會自動檢查一次。
-            </p>
-            <label>
-              GitHub 權杖
-              <input
-                type="password"
-                value={ghToken}
-                onChange={(e) => setGhToken(e.target.value)}
-                placeholder="github_pat_…"
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-              />
-            </label>
-            <div className="btn-row">
-              <button
-                className="primary-btn"
-                onClick={saveToken}
-                disabled={checking || !ghToken.trim() || ghToken.trim() === loadGithubToken()}
-              >
-                儲存權杖
-              </button>
-              <button className="primary-btn ghost" onClick={check} disabled={checking || !loadGithubToken()}>
-                {checking ? '檢查中…' : '立即檢查更新'}
-              </button>
-            </div>
+            <p className="muted">App 每 3 小時會自動檢查一次新版本，有新版會在首頁顯示提示。</p>
+            <button className="primary-btn ghost" onClick={check} disabled={checking}>
+              {checking ? '檢查中…' : '立即檢查更新'}
+            </button>
             {updateMsg && <p className={updateMsg.ok ? 'success' : 'error'}>{updateMsg.text}</p>}
             {update && <UpdateBanner info={update} />}
           </>

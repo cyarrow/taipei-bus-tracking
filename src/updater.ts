@@ -49,22 +49,19 @@ interface ReleaseJson {
   assets: { name: string; url: string }[];
 }
 
-/** 查詢 GitHub 上最新一版；token 為空時使用已儲存的 token */
+/** 查詢 GitHub 上最新一版（公開 repo 不需要權杖；有設定權杖時一併帶上） */
 export async function fetchLatestRelease(token = loadGithubToken()): Promise<UpdateInfo> {
-  if (!token) throw new UpdateError('尚未設定 GitHub 權杖');
   let res: Response;
   try {
-    res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/vnd.github+json',
-      },
-    });
+    const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers });
   } catch {
     throw new UpdateError('無法連線到 GitHub');
   }
   if (res.status === 401) throw new UpdateError('GitHub 權杖無效或已過期');
-  if (res.status === 404) throw new UpdateError('找不到版本資料（權杖可能沒有這個 repo 的讀取權限）');
+  if (res.status === 403) throw new UpdateError('GitHub 查詢次數已達上限，請稍後再試');
+  if (res.status === 404) throw new UpdateError('找不到版本資料');
   if (!res.ok) throw new UpdateError(`GitHub 回應錯誤（${res.status}）`);
   const r = (await res.json()) as ReleaseJson;
   const build = Number(r.tag_name.replace(/^build-/, ''));
@@ -81,7 +78,7 @@ export async function fetchLatestRelease(token = loadGithubToken()): Promise<Upd
 
 /** 若有比目前更新的版本則回傳；force=false 時 3 小時內只檢查一次 */
 export async function checkForUpdate(force = false): Promise<UpdateInfo | undefined> {
-  if (!isNative() || !loadGithubToken()) return undefined;
+  if (!isNative()) return undefined;
   const last = readJson<number>(KEY_LAST_CHECK, 0);
   if (!force && Date.now() - last < CHECK_INTERVAL) return undefined;
   const [latest, cur] = await Promise.all([fetchLatestRelease(), currentVersion()]);
@@ -103,7 +100,10 @@ export async function installUpdate(
   }
   const handle = await ApkUpdater.addListener('progress', (e) => onProgress(e.percent));
   try {
-    await ApkUpdater.downloadAndInstall({ url: info.assetUrl, token: loadGithubToken() });
+    await ApkUpdater.downloadAndInstall({
+      url: info.assetUrl,
+      token: loadGithubToken() || undefined,
+    });
     return 'started';
   } catch (e) {
     throw new UpdateError(e instanceof Error ? e.message : '下載失敗');

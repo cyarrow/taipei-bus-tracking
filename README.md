@@ -14,10 +14,11 @@
 - 地圖使用 OpenStreetMap（Leaflet），免金鑰
 
 ## 安裝 APK
-1. 到 GitHub 的 **Actions** 頁籤 → 點最新一次成功的「Build APK」
-2. 在頁面下方 **Artifacts** 下載 `taipei-bus-apk`（是 zip，解壓後得到 `.apk`）
-3. 把 APK 傳到手機安裝（需允許「安裝未知來源的應用程式」）
-4. 第一次開啟，輸入 TDX 的 Client ID / Client Secret
+1. 到 GitHub 的 **Releases** 下載最新版的 `taipei-bus.apk`
+2. 在手機上安裝（需允許「安裝未知來源的應用程式」）
+3. 第一次開啟，輸入 TDX 的 Client ID / Client Secret
+
+之後 App 會自動檢查新版本，在首頁按「更新」即可在 App 內下載安裝。
 
 ### 申請 TDX 金鑰
 1. 到 https://tdx.transportdata.tw 註冊會員
@@ -30,14 +31,20 @@ npm run dev      # 在瀏覽器開發（注意：瀏覽器可能因 CORS 擋掉 
 npm run build    # 型別檢查＋打包網頁
 ```
 
-本機自己編譯 APK（需安裝 Android Studio / Android SDK、JDK 21）：
+本機自己編譯 APK（需安裝 Android Studio / Android SDK、JDK 21；使用預設 debug 簽章，無法覆蓋安裝 CI 版本）：
 ```bash
 npm run build
 npx cap add android   # 只需第一次
+node scripts/patch-android.mjs
 npx cap sync android
 cd android && ./gradlew assembleDebug
 ```
 
+## 發佈流程
+每次 push，GitHub Actions 會：
+1. 用 Secret `ANDROID_SIGNING_PASSWORD` 解密 `signing/release.keystore.enc`（固定簽章，新版才能覆蓋安裝）
+2. 產生 Android 專案並套用 `scripts/patch-android.mjs`（權限、原生更新外掛、版本號＝build 編號）
+3. 編譯 APK、確認簽章正確，發佈到 GitHub Releases（`build-N`）
+
 ## 技術
 React + TypeScript + Vite，以 Capacitor 包成 Android App。
-`signing/debug.keystore` 是固定的 debug 簽章（密碼 `android`），只用於自用安裝，讓新版 APK 能覆蓋舊版。

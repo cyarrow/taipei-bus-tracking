@@ -337,3 +337,13 @@ export async function fetchEtaByStops(city: City, stopUIDs: string[]): Promise<E
   );
   return lists.flat();
 }
+
+/** 查詢單一站位（含經過的所有路線） */
+export async function fetchStation(city: City, stationID: string): Promise<Station | undefined> {
+  const f = encodeURIComponent(`StationID eq '${stationID.replace(/'/g, "''")}'`);
+  const list = await apiGet<Station[]>(`/v2/Bus/Station/City/${city}?%24filter=${f}`, {
+    ttl: 24 * 3600,
+    persist: true,
+  });
+  return list[0];
+}

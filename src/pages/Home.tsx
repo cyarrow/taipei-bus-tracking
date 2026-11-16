@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { describeEta, pickBest, type EtaDisplay } from '../eta';
 import UpdateBanner from '../components/UpdateBanner';
 import type { UpdateInfo } from '../updater';
+import type { StationTarget } from './StationPage';
 import { distanceM, getLocation, walkMinutes, type LatLon } from '../geo';
 import { loadSettings } from '../storage';
 import { fetchEta, fetchStopsOfRoute, TdxError } from '../tdx';
@@ -44,7 +45,13 @@ interface Props {
   onNearby: () => void;
   update?: UpdateInfo;
   onDismissUpdate: () => void;
+  onStation: (s: StationTarget) => void;
 }
+
+const stationOf = (f: FavoriteStop): StationTarget | undefined =>
+  f.stationID
+    ? { city: f.city, stationID: f.stationID, name: f.stopName, lat: f.lat, lon: f.lon, routeUID: f.routeUID }
+    : undefined;
 
 interface Card {
   key: string;
@@ -281,10 +288,25 @@ export default function Home(props: Props) {
         <ul className="cards">
           {cards.map((c) =>
             c.items.length === 1 ? (
-              <SingleCard key={c.key} item={c.items[0]} onOpen={onOpenRoute} />
+              <SingleCard
+                key={c.key}
+                item={c.items[0]}
+                onOpen={onOpenRoute}
+                onStation={props.onStation}
+              />
             ) : (
               <li key={c.key} className={`card multi tone-${c.items[0].d.tone}`}>
-                <div className="multi-head">{c.stopName}</div>
+                <div className="multi-head station-head">
+                  <span>{c.stopName}</span>
+                  {stationOf(c.items[0].fav) && (
+                    <button
+                      className="station-btn"
+                      onClick={() => props.onStation(stationOf(c.items[0].fav)!)}
+                    >
+                      🚏 本站路線
+                    </button>
+                  )}
+                </div>
                 {c.items.map(({ fav, d, loaded, hint }) => (
                   <button key={fav.id} className="multi-row" onClick={() => onOpenRoute(fav)}>
                     <span className="route small">{fav.routeName}</span>
@@ -314,10 +336,13 @@ export default function Home(props: Props) {
 function SingleCard({
   item,
   onOpen,
+  onStation,
 }: {
   item: Card['items'][number];
   onOpen: (f: FavoriteStop) => void;
+  onStation: (s: StationTarget) => void;
 }) {
+  const st = stationOf(item.fav);
   const { fav, d, loaded, hint } = item;
   return (
     <li className={`card tone-${d.tone}`}>
@@ -335,6 +360,11 @@ function SingleCard({
           {d.sub && <div className="eta-sub">{d.sub}</div>}
         </div>
       </button>
+      {st && (
+        <button className="station-btn icon" aria-label="本站路線" onClick={() => onStation(st)}>
+          🚏
+        </button>
+      )}
     </li>
   );
 }

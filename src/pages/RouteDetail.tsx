@@ -1,13 +1,15 @@
 import RouteView from '../components/RouteView';
 import type { FavoriteStop } from '../types';
+import type { StationTarget } from './StationPage';
 
 interface Props {
   fav: FavoriteStop;
   favorites: FavoriteStop[];
   onBack: () => void;
+  onStation: (s: StationTarget) => void;
 }
 
-export default function RouteDetail({ fav, favorites, onBack }: Props) {
+export default function RouteDetail({ fav, favorites, onBack, onStation }: Props) {
   return (
     <div className="page">
       <header className="topbar">
@@ -24,6 +26,7 @@ export default function RouteDetail({ fav, favorites, onBack }: Props) {
         initialDirection={fav.direction}
         highlightStopUID={fav.stopUID}
         favorites={favorites}
+        onStation={onStation}
       />
     </div>
   );

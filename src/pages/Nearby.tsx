@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import BusMap, { type MapStop } from '../components/BusMap';
-import { describeEta, pickBest } from '../eta';
-import {
-  distanceM,
-  formatDistance,
-  getLocation,
-  openWalkingNav,
-  walkMinutes,
-  type LatLon,
-} from '../geo';
-import { fetchEtaByStops, fetchNearbyStations, fetchRouteIndex, TdxError } from '../tdx';
-import type { City, Eta, FavoriteStop, Group, RouteInfo, Station } from '../types';
+import StationCard from '../components/StationCard';
+import { useRouteIndex } from '../useRouteIndex';
+import { distanceM, getLocation, type LatLon } from '../geo';
+import { fetchEtaByStops, fetchNearbyStations, TdxError } from '../tdx';
+import type { City, Eta, FavoriteStop, Group, Station } from '../types';
 import { usePolling } from '../usePolling';
 
 const RADIUS = 450;
@@ -35,7 +29,7 @@ export default function Nearby({ favorites, groups, defaultGroupId, onAdd, onOpe
   const [me, setMe] = useState<LatLon>();
   const [stations, setStations] = useState<NearStation[]>();
   const [etas, setEtas] = useState<Eta[]>([]);
-  const [routes, setRoutes] = useState<Map<string, RouteInfo>>(new Map());
+  const routes = useRouteIndex();
   const [error, setError] = useState<string>();
   const [status, setStatus] = useState('定位中…');
   const [groupId, setGroupId] = useState(defaultGroupId ?? '');
@@ -66,9 +60,6 @@ export default function Nearby({ favorites, groups, defaultGroupId, onAdd, onOpe
           .sort((a, b) => a.dist - b.dist)
           .slice(0, 15),
       );
-      fetchRouteIndex()
-        .then((idx) => setRoutes(new Map(idx.map((r) => [r.routeUID, r]))))
-        .catch(() => {});
     } catch (e) {
       setError(e instanceof TdxError || e instanceof Error ? e.message : '載入失敗');
     }
@@ -102,13 +93,6 @@ export default function Nearby({ favorites, groups, defaultGroupId, onAdd, onOpe
     return m;
   }, [etas]);
 
-  const headsignOf = (routeUID: string, dir?: number) => {
-    const r = routes.get(routeUID);
-    if (!r || dir == null) return '';
-    const to = dir === 0 ? r.destination : r.departure;
-    return to ? `往 ${to}` : '';
-  };
-
   const mapStops = useMemo<MapStop[]>(
     () =>
       (stations ?? []).map((s) => ({
@@ -123,20 +107,11 @@ export default function Nearby({ favorites, groups, defaultGroupId, onAdd, onOpe
     [stations],
   );
 
-  const toFav = (s: NearStation, stop: Station['Stops'][number], e: Eta): FavoriteStop => ({
-    id: `${s.city}-${stop.RouteUID}-${e.Direction}-${stop.StopUID}`,
-    city: s.city,
-    routeUID: stop.RouteUID,
-    routeName: stop.RouteName.Zh_tw,
-    direction: e.Direction,
-    headsign: headsignOf(stop.RouteUID, e.Direction) || stop.RouteName.Zh_tw,
-    stopUID: stop.StopUID,
-    stopName: stop.StopName.Zh_tw,
-    stationID: s.station.StationID,
-    lat: s.pos.lat,
-    lon: s.pos.lon,
-    groupId: groupId || undefined,
-  });
+  const add = (f: FavoriteStop) => {
+    onAdd(f);
+    setAdded(`${f.routeName} ${f.stopName}`);
+    window.setTimeout(() => setAdded(undefined), 2000);
+  };
 
   return (
     <div className="page">
@@ -171,74 +146,25 @@ export default function Nearby({ favorites, groups, defaultGroupId, onAdd, onOpe
             <p className="muted pad">方圓 {RADIUS} 公尺內沒有公車站</p>
           )}
           <ul className="cards">
-            {stations.map((s) => {
-              const rows = s.station.Stops.map((stop) => {
-                const e = pickBest(etaByStop.get(stop.StopUID) ?? []);
-                return { stop, e, d: describeEta(e) };
-              }).sort(
-                (a, b) =>
-                  a.d.sortKey - b.d.sortKey ||
-                  a.stop.RouteName.Zh_tw.localeCompare(b.stop.RouteName.Zh_tw, 'zh-Hant', {
-                    numeric: true,
-                  }),
-              );
-              return (
-                <li
-                  key={s.station.StationUID}
-                  className="card multi"
-                  ref={(el) => {
-                    if (el) cardRefs.current.set(s.station.StationUID, el);
-                  }}
-                >
-                  <div className="multi-head station-head">
-                    <span>
-                      {s.station.StationName.Zh_tw}
-                      <small className="muted">
-                        {' '}
-                        {formatDistance(s.dist)}・步行 {walkMinutes(s.dist)} 分
-                      </small>
-                    </span>
-                    <button className="nav-btn" onClick={() => openWalkingNav(s.pos)}>
-                      🚶 導航
-                    </button>
-                  </div>
-                  {rows.map(({ stop, e, d }) => {
-                    const fav = e ? toFav(s, stop, e) : undefined;
-                    const isFav = !!fav && favorites.some((f) => f.id === fav.id);
-                    return (
-                      <div key={stop.StopUID + stop.RouteUID} className="multi-row">
-                        <button
-                          className="row-main"
-                          disabled={!fav}
-                          onClick={() => fav && onOpenRoute(fav)}
-                        >
-                          <span className="route small">{stop.RouteName.Zh_tw}</span>
-                          <span className="headsign grow">
-                            {headsignOf(stop.RouteUID, e?.Direction)}
-                          </span>
-                          <span className={`eta-inline tone-${d.tone}`}>
-                            {etas.length ? d.text : '…'}
-                          </span>
-                        </button>
-                        <button
-                          className="add-btn"
-                          disabled={!fav || isFav}
-                          aria-label="加入我的站牌"
-                          onClick={() => {
-                            if (!fav) return;
-                            onAdd(fav);
-                            setAdded(`${fav.routeName} ${fav.stopName}`);
-                            window.setTimeout(() => setAdded(undefined), 2000);
-                          }}
-                        >
-                          {isFav ? '✓' : '＋'}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </li>
-              );
-            })}
+            {stations.map((s) => (
+              <StationCard
+                key={s.station.StationUID}
+                city={s.city}
+                station={s.station}
+                pos={s.pos}
+                dist={s.dist}
+                etaByStop={etaByStop}
+                etasLoaded={etas.length > 0}
+                routes={routes}
+                favorites={favorites}
+                groupId={groupId}
+                onAdd={add}
+                onOpenRoute={onOpenRoute}
+                cardRef={(el) => {
+                  if (el) cardRefs.current.set(s.station.StationUID, el);
+                }}
+              />
+            ))}
           </ul>
         </>
       )}

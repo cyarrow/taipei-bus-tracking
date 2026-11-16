@@ -299,3 +299,16 @@ div.multi-row { cursor: default; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
 .progress div { height: 100%; background: var(--primary); transition: width 0.2s; }
+
+/* ---- 本站路線 ---- */
+.station-btn {
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  border-radius: 16px; padding: 4px 10px; font-size: 0.8rem; font-weight: 600; white-space: nowrap;
+}
+.station-btn.icon { padding: 6px 8px; font-size: 1rem; flex-shrink: 0; align-self: center; }
+.station-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.station-summary small { font-weight: 500; }
+.group-picker.inline { justify-content: flex-end; }
+.multi-row.row-hl { background: color-mix(in srgb, var(--primary) 12%, transparent); margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 8px; }
+.summary-text { display: flex; flex-direction: column; gap: 2px; }
+.card.multi > .multi-row:first-child { border-top: none; }

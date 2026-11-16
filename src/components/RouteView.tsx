@@ -12,6 +12,7 @@ import {
 import type { BusGps, BusPosition, City, Eta, FavoriteStop, Shape, StopOfRoute } from '../types';
 import { usePolling } from '../usePolling';
 import BusMap, { parseWkt, type MapStop } from './BusMap';
+import type { StationTarget } from '../pages/StationPage';
 
 export interface StopPick {
   city: City;
@@ -35,6 +36,8 @@ interface Props {
   favorites: FavoriteStop[];
   /** 有傳入時，每個站牌可點擊加入 */
   onPick?: (p: StopPick) => void;
+  /** 有傳入時（且非加入模式），點站牌開啟「本站路線」 */
+  onStation?: (s: StationTarget) => void;
 }
 
 interface Option {
@@ -45,7 +48,8 @@ interface Option {
 }
 
 export default function RouteView(props: Props) {
-  const { city, routeName, routeUID, initialDirection, highlightStopUID, favorites, onPick } = props;
+  const { city, routeName, routeUID, initialDirection, highlightStopUID, favorites, onPick, onStation } =
+    props;
   const [options, setOptions] = useState<Option[]>([]);
   const [selected, setSelected] = useState<string>();
   const [etas, setEtas] = useState<Eta[]>([]);
@@ -191,6 +195,18 @@ export default function RouteView(props: Props) {
     : undefined;
   const hlDist = hlPos && me ? distanceM(me, hlPos) : undefined;
 
+  const openStation = (s: StopOfRoute['Stops'][number]) =>
+    onStation?.({
+      city,
+      stationID: s.StationID ?? '',
+      name: s.StopName.Zh_tw,
+      lat: s.StopPosition?.PositionLat,
+      lon: s.StopPosition?.PositionLon,
+      routeUID,
+    });
+  const openStationRef = useRef(openStation);
+  openStationRef.current = openStation;
+
   const mapStops = useMemo<MapStop[]>(() => {
     if (!current) return [];
     return current.route.Stops.filter((s) => s.StopPosition).map((s) => {
@@ -202,9 +218,10 @@ export default function RouteView(props: Props) {
         name: s.StopName.Zh_tw,
         label: `${s.StopSequence}. ${s.StopName.Zh_tw}${etas.length ? `｜${d.text}` : ''}`,
         highlight: s.StopUID === highlightStopUID,
+        onClick: onStation && !onPick ? () => openStationRef.current(s) : undefined,
       };
     });
-  }, [current, etaByStop, etas.length, highlightStopUID]);
+  }, [current, etaByStop, etas.length, highlightStopUID, onStation, onPick]);
 
   const mapLines = useMemo<[number, number][][]>(() => {
     if (!current) return [];
@@ -297,7 +314,11 @@ export default function RouteView(props: Props) {
 
       <div className="status-line">
         <span>
-          {onPick ? '點選站牌加入我的站牌' : updatedAt ? `更新於 ${updatedAt.toLocaleTimeString('zh-TW', { hour12: false })}` : ''}
+          {onPick
+            ? '點選站牌加入我的站牌'
+            : onStation
+              ? '點站牌看經過此站的所有路線'
+              : updatedAt ? `更新於 ${updatedAt.toLocaleTimeString('zh-TW', { hour12: false })}` : ''}
         </span>
         <span className="legend">{mode === 'map' ? '🚌 GPS 位置・🔵 我' : '🚌 公車位置'}</span>
       </div>
@@ -363,6 +384,11 @@ export default function RouteView(props: Props) {
                     }
                   >
                     {content}
+                  </button>
+                ) : onStation ? (
+                  <button className={`stop-row ${fav ? 'fav' : ''}`} onClick={() => openStation(s)}>
+                    {content}
+                    <span className="add-mark">›</span>
                   </button>
                 ) : (
                   <div className={`stop-row ${fav ? 'fav' : ''}`}>{content}</div>

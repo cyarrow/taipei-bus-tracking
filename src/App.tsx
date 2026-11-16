@@ -6,6 +6,7 @@ import Settings from './pages/Settings';
 import Groups from './pages/Groups';
 import RouteDetail from './pages/RouteDetail';
 import Nearby from './pages/Nearby';
+import StationPage, { type StationTarget } from './pages/StationPage';
 import { groupForNow } from './groups';
 import { checkForUpdate, type UpdateInfo } from './updater';
 import { loadCredentials, loadFavorites, loadGroups, saveFavorites, saveGroups } from './storage';
@@ -17,6 +18,7 @@ type View =
   | { name: 'settings' }
   | { name: 'groups' }
   | { name: 'nearby' }
+  | { name: 'station'; target: StationTarget }
   | { name: 'route'; fav: FavoriteStop };
 
 const autoTab = (groups: Group[]) => groupForNow(groups)?.id ?? ALL_TAB;
@@ -99,7 +101,28 @@ export default function App() {
         />
       );
     case 'route':
-      return <RouteDetail fav={view.fav} favorites={favorites} onBack={back} />;
+      return (
+        <RouteDetail
+          key={view.fav.id}
+          fav={view.fav}
+          favorites={favorites}
+          onBack={back}
+          onStation={(target) => push({ name: 'station', target })}
+        />
+      );
+    case 'station':
+      return (
+        <StationPage
+          key={`${view.target.city}-${view.target.stationID}`}
+          target={view.target}
+          favorites={favorites}
+          groups={groups}
+          defaultGroupId={activeTab === ALL_TAB ? undefined : activeTab}
+          onAdd={(f) => updateFavorites([...favorites, f])}
+          onOpenRoute={(fav) => push({ name: 'route', fav })}
+          onBack={back}
+        />
+      );
     case 'add':
       return (
         <AddStop
@@ -123,6 +146,7 @@ export default function App() {
           onSettings={() => push({ name: 'settings' })}
           onGroups={() => push({ name: 'groups' })}
           onNearby={() => push({ name: 'nearby' })}
+          onStation={(target) => push({ name: 'station', target })}
           update={updateDismissed ? undefined : update}
           onDismissUpdate={() => setUpdateDismissed(true)}
         />

@@ -1,0 +1,90 @@
+name: Build APK
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      ANDROID_SIGNING_PASSWORD: ${{ secrets.ANDROID_SIGNING_PASSWORD }}
+      ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/release.keystore
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        run: npm run build
+
+      # 用 Secret 密碼解密 repo 內加密的簽章檔；沒設定 Secret 就停止，避免產生無法覆蓋安裝的 APK
+      - name: Decrypt signing key
+        run: |
+          if [ -z "$ANDROID_SIGNING_PASSWORD" ]; then
+            echo "::error::請在 repo Settings → Secrets and variables → Actions 設定 ANDROID_SIGNING_PASSWORD"
+            exit 1
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 \
+            -in signing/release.keystore.enc -out "$ANDROID_KEYSTORE_FILE" \
+            -pass env:ANDROID_SIGNING_PASSWORD
+
+      - name: Generate Android project
+        run: |
+          npx cap add android
+          node scripts/patch-android.mjs
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      # 確認 APK 用的是固定簽章，否則無法覆蓋安裝
+      - name: Verify signing certificate
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          EXPECTED=$(keytool -list -v -keystore "$ANDROID_KEYSTORE_FILE" -storepass "$ANDROID_SIGNING_PASSWORD" -alias taipeibus \
+            | grep 'SHA256:' | head -1 | sed 's/.*SHA256: //; s/://g' | tr 'A-Z' 'a-z')
+          ACTUAL=$("$APKSIGNER" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk \
+            | grep 'SHA-256 digest' | head -1 | sed 's/.*: //')
+          echo "expected=$EXPECTED actual=$ACTUAL"
+          test -n "$EXPECTED" && test "$EXPECTED" = "$ACTUAL"
+
+      - name: Prepare release files
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/taipei-bus.apk
+          git log -1 --pretty=%s > out/notes.txt
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: taipei-bus-apk
+          path: out/taipei-bus.apk
+          retention-days: 30
+
+      # 發佈到 GitHub Releases，App 會從這裡檢查並下載新版
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 第 ${{ github.run_number }} 版
+          body_path: out/notes.txt
+          target_commitish: ${{ github.sha }}
+          files: out/taipei-bus.apk
+          make_latest: true

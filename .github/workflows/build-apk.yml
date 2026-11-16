@@ -38,15 +38,20 @@ jobs:
           node scripts/patch-android.mjs
           npx cap sync android
 
-      - name: Use fixed debug keystore
-        # 固定簽章，之後的新版 APK 才能直接覆蓋安裝、不會清掉已存的站牌
-        run: |
-          mkdir -p ~/.android
-          cp signing/debug.keystore ~/.android/debug.keystore
-
       - name: Build APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+
+      # 確認 APK 用的是 repo 內的固定簽章，否則無法覆蓋安裝
+      - name: Verify signing certificate
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          EXPECTED=$(keytool -list -v -keystore signing/debug.keystore -storepass android -alias androiddebugkey \
+            | grep 'SHA256:' | head -1 | sed 's/.*SHA256: //; s/://g' | tr 'A-Z' 'a-z')
+          ACTUAL=$("$APKSIGNER" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk \
+            | grep 'SHA-256 digest' | head -1 | sed 's/.*: //')
+          echo "expected=$EXPECTED actual=$ACTUAL"
+          test -n "$EXPECTED" && test "$EXPECTED" = "$ACTUAL"
 
       - name: Prepare release files
         run: |

@@ -1,6 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import UpdateBanner from '../components/UpdateBanner';
 import { loadCredentials, loadSettings, saveCredentials, saveSettings } from '../storage';
 import { testCredentials, TdxError } from '../tdx';
+import {
+  checkForUpdate,
+  currentVersion,
+  fetchLatestRelease,
+  isNative,
+  loadGithubToken,
+  saveGithubToken,
+  UpdateError,
+  type UpdateInfo,
+} from '../updater';
 
 export default function Settings({ onDone }: { onDone: () => void }) {
   const initial = loadCredentials();
@@ -9,6 +20,46 @@ export default function Settings({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
   const [prefs, setPrefs] = useState(loadSettings);
+  const [version, setVersion] = useState<string>();
+  const [ghToken, setGhToken] = useState(loadGithubToken);
+  const [updateMsg, setUpdateMsg] = useState<{ ok: boolean; text: string }>();
+  const [update, setUpdate] = useState<UpdateInfo>();
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    currentVersion().then((v) => setVersion(v.build ? `${v.name}（第 ${v.build} 版）` : v.name));
+  }, []);
+
+  const saveToken = async () => {
+    const t = ghToken.trim();
+    setChecking(true);
+    setUpdateMsg(undefined);
+    try {
+      await fetchLatestRelease(t);
+      saveGithubToken(t);
+      setUpdateMsg({ ok: true, text: '權杖驗證成功，已儲存' });
+      await check();
+    } catch (e) {
+      setUpdateMsg({ ok: false, text: e instanceof UpdateError ? e.message : '驗證失敗' });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const check = async () => {
+    setChecking(true);
+    setUpdate(undefined);
+    try {
+      const u = await checkForUpdate(true);
+      if (u) setUpdate(u);
+      else setUpdateMsg({ ok: true, text: '已經是最新版本' });
+    } catch (e) {
+      setUpdateMsg({ ok: false, text: e instanceof UpdateError ? e.message : '檢查失敗' });
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const setWalkHint = (walkHint: boolean) => {
     const next = { ...prefs, walkHint };
     setPrefs(next);
@@ -99,6 +150,47 @@ export default function Settings({ onDone }: { onDone: () => void }) {
           />
         </label>
         <p className="muted">地圖資料 © OpenStreetMap 貢獻者</p>
+      </section>
+
+      <section className="settings pref">
+        <h2>App 更新</h2>
+        <p className="muted">目前版本：{version ?? '…'}</p>
+        {isNative() ? (
+          <>
+            <p className="muted">
+              新版本放在私人 GitHub repo，需要一組「只能讀取這個 repo」的 GitHub 權杖才能檢查與下載。
+              權杖只會儲存在這支手機上。設定後，App 每 3 小時會自動檢查一次。
+            </p>
+            <label>
+              GitHub 權杖
+              <input
+                type="password"
+                value={ghToken}
+                onChange={(e) => setGhToken(e.target.value)}
+                placeholder="github_pat_…"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </label>
+            <div className="btn-row">
+              <button
+                className="primary-btn"
+                onClick={saveToken}
+                disabled={checking || !ghToken.trim() || ghToken.trim() === loadGithubToken()}
+              >
+                儲存權杖
+              </button>
+              <button className="primary-btn ghost" onClick={check} disabled={checking || !loadGithubToken()}>
+                {checking ? '檢查中…' : '立即檢查更新'}
+              </button>
+            </div>
+            {updateMsg && <p className={updateMsg.ok ? 'success' : 'error'}>{updateMsg.text}</p>}
+            {update && <UpdateBanner info={update} />}
+          </>
+        ) : (
+          <p className="muted">網頁版不需要更新</p>
+        )}
       </section>
     </div>
   );

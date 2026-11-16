@@ -5,9 +5,14 @@ on:
     branches: ['**']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v5
 
@@ -43,13 +48,25 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Rename APK
+      - name: Prepare release files
         run: |
           mkdir -p out
-          cp android/app/build/outputs/apk/debug/app-debug.apk "out/taipei-bus-${GITHUB_SHA::7}.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/taipei-bus.apk
+          git log -1 --pretty=%s > out/notes.txt
 
       - uses: actions/upload-artifact@v5
         with:
           name: taipei-bus-apk
-          path: out/*.apk
+          path: out/taipei-bus.apk
           retention-days: 30
+
+      # 發佈到 GitHub Releases，App 會從這裡檢查並下載新版
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 第 ${{ github.run_number }} 版
+          body_path: out/notes.txt
+          target_commitish: ${{ github.sha }}
+          files: out/taipei-bus.apk
+          make_latest: true

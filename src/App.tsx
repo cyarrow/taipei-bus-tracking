@@ -7,6 +7,7 @@ import Groups from './pages/Groups';
 import RouteDetail from './pages/RouteDetail';
 import Nearby from './pages/Nearby';
 import { groupForNow } from './groups';
+import { checkForUpdate, type UpdateInfo } from './updater';
 import { loadCredentials, loadFavorites, loadGroups, saveFavorites, saveGroups } from './storage';
 import type { FavoriteStop, Group } from './types';
 
@@ -27,6 +28,8 @@ export default function App() {
   const [favorites, setFavorites] = useState<FavoriteStop[]>(loadFavorites);
   const [groups, setGroups] = useState<Group[]>(loadGroups);
   const [activeTab, setActiveTab] = useState(() => autoTab(loadGroups()));
+  const [update, setUpdate] = useState<UpdateInfo>();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const stackRef = useRef(stack);
   stackRef.current = stack;
 
@@ -51,10 +54,18 @@ export default function App() {
     if (activeTab !== ALL_TAB && !ids.has(activeTab)) setActiveTab(ALL_TAB);
   };
 
-  // 每次 App 回到前景，依時段自動切換分組
+  // 每次 App 回到前景，依時段自動切換分組，並檢查更新（3 小時內只查一次）
   useEffect(() => {
+    const check = () =>
+      checkForUpdate()
+        .then((u) => u && setUpdate(u))
+        .catch(() => {});
+    check();
     const onVisible = () => {
-      if (document.visibilityState === 'visible') setActiveTab(autoTab(loadGroups()));
+      if (document.visibilityState === 'visible') {
+        setActiveTab(autoTab(loadGroups()));
+        check();
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -112,6 +123,8 @@ export default function App() {
           onSettings={() => push({ name: 'settings' })}
           onGroups={() => push({ name: 'groups' })}
           onNearby={() => push({ name: 'nearby' })}
+          update={updateDismissed ? undefined : update}
+          onDismissUpdate={() => setUpdateDismissed(true)}
         />
       );
   }

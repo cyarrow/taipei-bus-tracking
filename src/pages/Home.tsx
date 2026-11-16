@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { describeEta, pickBest, type EtaDisplay } from '../eta';
+import UpdateBanner from '../components/UpdateBanner';
+import type { UpdateInfo } from '../updater';
 import { distanceM, getLocation, walkMinutes, type LatLon } from '../geo';
 import { loadSettings } from '../storage';
 import { fetchEta, fetchStopsOfRoute, TdxError } from '../tdx';
@@ -40,6 +42,8 @@ interface Props {
   onSettings: () => void;
   onGroups: () => void;
   onNearby: () => void;
+  update?: UpdateInfo;
+  onDismissUpdate: () => void;
 }
 
 interface Card {
@@ -189,6 +193,8 @@ export default function Home(props: Props) {
           </button>
         </div>
       </header>
+
+      {props.update && <UpdateBanner info={props.update} onDismiss={props.onDismissUpdate} />}
 
       <div className="tabs">
         {tabs.map((t) => (

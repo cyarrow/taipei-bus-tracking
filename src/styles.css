@@ -282,3 +282,20 @@ div.multi-row { cursor: default; }
 .switch-row span { display: flex; flex-direction: column; gap: 2px; }
 .switch-row small { font-weight: 400; }
 .switch-row input { width: 22px; height: 22px; flex-shrink: 0; }
+
+/* ---- 更新 ---- */
+.update-banner {
+  display: flex; align-items: center; gap: 12px; justify-content: space-between;
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  border-radius: 14px; padding: 12px 14px; margin: 4px 0 10px;
+}
+.update-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.update-notes { font-size: 0.85rem; color: var(--muted); }
+.update-msg { font-size: 0.85rem; color: var(--text); }
+.update-actions { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; }
+.primary-btn.small { padding: 8px 16px; min-width: 64px; }
+.primary-btn.ghost { background: none; color: var(--primary); border: 1px solid var(--primary); }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.progress { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.progress div { height: 100%; background: var(--primary); transition: width 0.2s; }

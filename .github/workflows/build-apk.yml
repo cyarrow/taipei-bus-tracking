@@ -30,6 +30,7 @@ jobs:
       - name: Generate Android project
         run: |
           npx cap add android
+          node scripts/patch-android.mjs
           npx cap sync android
 
       - name: Use fixed debug keystore

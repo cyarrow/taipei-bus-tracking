@@ -233,3 +233,52 @@ div.stop-row { cursor: default; }
 .group-time { display: flex; align-items: center; gap: 6px; }
 .group-time input { flex: 1; min-width: 0; }
 .wide { width: 100%; }
+
+/* ---- 地圖 ---- */
+.bus-map {
+  width: 100%; border-radius: 14px; overflow: hidden; margin: 4px 0 12px;
+  border: 1px solid var(--border); z-index: 0;
+}
+.bus-marker { font-size: 22px; line-height: 28px; text-align: center; filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4)); }
+.segmented {
+  display: flex; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 3px; margin: 4px 0 8px;
+}
+.segmented button {
+  flex: 1; border: none; background: none; padding: 8px; border-radius: 8px; font-weight: 600;
+}
+.segmented button.active { background: var(--primary); color: var(--primary-text); }
+
+/* ---- 步行與導航 ---- */
+.nearest-walk {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; font-weight: 500; font-size: 0.9rem; color: var(--muted);
+}
+.nav-btn {
+  border: 1px solid var(--primary); color: var(--primary); background: none;
+  border-radius: 18px; padding: 6px 12px; font-size: 0.85rem; font-weight: 600; white-space: nowrap;
+}
+.walk-hint { display: block; font-size: 0.8rem; color: var(--primary); font-weight: 600; margin-top: 2px; }
+.walk-hint.late { color: var(--muted); font-weight: 500; }
+
+/* ---- 附近站牌 ---- */
+.station-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.station-head small { font-weight: 500; font-size: 0.8rem; }
+.multi-row .row-main {
+  all: unset; box-sizing: border-box; cursor: pointer; flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 12px;
+}
+.multi-row .row-main:disabled { cursor: default; }
+.add-btn {
+  border: none; background: none; color: var(--primary); font-weight: 700;
+  font-size: 1.1rem; width: 36px; height: 36px; flex-shrink: 0;
+}
+div.multi-row { cursor: default; }
+
+/* ---- 設定 ---- */
+.pref { margin-top: 28px; }
+.pref h2 { font-size: 1.1rem; margin: 0; }
+.switch-row { flex-direction: row !important; align-items: center; justify-content: space-between; gap: 12px; }
+.switch-row span { display: flex; flex-direction: column; gap: 2px; }
+.switch-row small { font-weight: 400; }
+.switch-row input { width: 22px; height: 22px; flex-shrink: 0; }

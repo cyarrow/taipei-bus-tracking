@@ -1,11 +1,33 @@
 import { useCallback, useMemo, useState } from 'react';
 import { describeEta, pickBest, type EtaDisplay } from '../eta';
+import { distanceM, getLocation, walkMinutes, type LatLon } from '../geo';
+import { loadSettings } from '../storage';
 import { fetchEta, fetchStopsOfRoute, TdxError } from '../tdx';
 import type { Eta, FavoriteStop, Group } from '../types';
 import { usePolling } from '../usePolling';
 
 const REFRESH_MS = 30_000;
 export const ALL_TAB = '__all__';
+const MAX_WALK_M = 3000;
+
+/** 已嘗試補過座標／站位的站牌，避免重複查詢 */
+const backfilled = new Set<string>();
+
+/** 依步行時間與到站時間，給出出門建議 */
+function walkHint(f: FavoriteStop, eta: Eta | undefined, me?: LatLon) {
+  if (!me || f.lat == null || f.lon == null) return undefined;
+  const dist = distanceM(me, { lat: f.lat, lon: f.lon });
+  if (dist > MAX_WALK_M) return undefined;
+  const walk = walkMinutes(dist);
+  if (dist < 60) return { text: '你就在站牌附近', late: false };
+  if (!eta || eta.StopStatus !== 0 || eta.EstimateTime == null) {
+    return { text: `步行約 ${walk} 分`, late: false };
+  }
+  const leave = Math.floor(eta.EstimateTime / 60) - walk;
+  if (leave >= 1) return { text: `步行 ${walk} 分・${leave} 分內出門`, late: false };
+  if (leave === 0) return { text: `步行 ${walk} 分・現在出門`, late: false };
+  return { text: `步行 ${walk} 分・可能趕不上這班`, late: true };
+}
 
 interface Props {
   favorites: FavoriteStop[];
@@ -17,12 +39,18 @@ interface Props {
   onAdd: () => void;
   onSettings: () => void;
   onGroups: () => void;
+  onNearby: () => void;
 }
 
 interface Card {
   key: string;
   stopName: string;
-  items: { fav: FavoriteStop; d: EtaDisplay; loaded: boolean }[];
+  items: {
+    fav: FavoriteStop;
+    d: EtaDisplay;
+    loaded: boolean;
+    hint?: { text: string; late: boolean };
+  }[];
 }
 
 export default function Home(props: Props) {
@@ -32,6 +60,7 @@ export default function Home(props: Props) {
   const [error, setError] = useState<string>();
   const [updatedAt, setUpdatedAt] = useState<Date>();
   const [editing, setEditing] = useState(false);
+  const [me, setMe] = useState<LatLon>();
 
   const visible = useMemo(
     () =>
@@ -43,6 +72,11 @@ export default function Home(props: Props) {
     if (favorites.length === 0) return;
     setLoading(true);
     setError(undefined);
+    if (loadSettings().walkHint) {
+      getLocation()
+        .then(setMe)
+        .catch(() => setMe(undefined));
+    }
     try {
       // 同一條路線只查一次（全部站牌都更新，切換分頁時不用重抓）
       const byRoute = new Map<string, FavoriteStop[]>();
@@ -51,7 +85,7 @@ export default function Home(props: Props) {
         byRoute.set(k, [...(byRoute.get(k) ?? []), f]);
       }
       const next: Record<string, Eta | undefined> = {};
-      const stationFix = new Map<string, string>();
+      const stationFix = new Map<string, Partial<FavoriteStop>>();
       await Promise.all(
         [...byRoute.values()].map(async (favs) => {
           const { city, routeName } = favs[0];
@@ -65,15 +99,22 @@ export default function Home(props: Props) {
             );
           }
           // 舊版加入的站牌沒有站位 ID，補上以便合併同站路線
-          if (favs.some((f) => f.stationID === undefined)) {
+          const need = favs.filter(
+            (f) => (f.stationID === undefined || f.lat == null) && !backfilled.has(f.id),
+          );
+          if (need.length) {
             const sor = await fetchStopsOfRoute(city, routeName).catch(() => []);
-            for (const f of favs) {
-              if (f.stationID !== undefined) continue;
+            for (const f of need) {
+              backfilled.add(f.id);
               const stop = sor
                 .filter((r) => r.RouteUID === f.routeUID && r.Direction === f.direction)
                 .flatMap((r) => r.Stops)
                 .find((s) => s.StopUID === f.stopUID);
-              stationFix.set(f.id, stop?.StationID ?? '');
+              stationFix.set(f.id, {
+                stationID: f.stationID ?? stop?.StationID ?? '',
+                lat: stop?.StopPosition?.PositionLat,
+                lon: stop?.StopPosition?.PositionLon,
+              });
             }
           }
         }),
@@ -83,7 +124,7 @@ export default function Home(props: Props) {
       if (stationFix.size > 0) {
         onChange(
           favorites.map((f) =>
-            stationFix.has(f.id) ? { ...f, stationID: stationFix.get(f.id) } : f,
+            stationFix.has(f.id) ? { ...f, ...stationFix.get(f.id) } : f,
           ),
         );
       }
@@ -102,12 +143,17 @@ export default function Home(props: Props) {
     for (const f of visible) {
       const key = f.stationID ? `st:${f.city}:${f.stationID}` : `uid:${f.id}`;
       const card = map.get(key) ?? { key, stopName: f.stopName, items: [] };
-      card.items.push({ fav: f, d: describeEta(etas[f.id]), loaded: !!updatedAt });
+      card.items.push({
+        fav: f,
+        d: describeEta(etas[f.id]),
+        loaded: !!updatedAt,
+        hint: walkHint(f, etas[f.id], me),
+      });
       map.set(key, card);
     }
     for (const c of map.values()) c.items.sort((a, b) => a.d.sortKey - b.d.sortKey);
     return [...map.values()];
-  }, [visible, etas, updatedAt]);
+  }, [visible, etas, updatedAt, me]);
 
   const move = (f: FavoriteStop, d: -1 | 1) => {
     const vi = visible.indexOf(f);
@@ -135,6 +181,9 @@ export default function Home(props: Props) {
               {editing ? '完成' : '編輯'}
             </button>
           )}
+          <button className="icon-btn" aria-label="附近站牌" onClick={props.onNearby}>
+            📍
+          </button>
           <button className="icon-btn" aria-label="設定" onClick={props.onSettings}>
             ⚙
           </button>
@@ -230,10 +279,13 @@ export default function Home(props: Props) {
             ) : (
               <li key={c.key} className={`card multi tone-${c.items[0].d.tone}`}>
                 <div className="multi-head">{c.stopName}</div>
-                {c.items.map(({ fav, d, loaded }) => (
+                {c.items.map(({ fav, d, loaded, hint }) => (
                   <button key={fav.id} className="multi-row" onClick={() => onOpenRoute(fav)}>
                     <span className="route small">{fav.routeName}</span>
-                    <span className="headsign grow">{fav.headsign}</span>
+                    <span className="headsign grow">
+                      {fav.headsign}
+                      {hint && <span className={`walk-hint ${hint.late ? 'late' : ''}`}>{hint.text}</span>}
+                    </span>
                     <span className={`eta-inline tone-${d.tone}`}>
                       {loaded ? d.text : '…'}
                       {d.sub && <small> {d.sub}</small>}
@@ -260,7 +312,7 @@ function SingleCard({
   item: Card['items'][number];
   onOpen: (f: FavoriteStop) => void;
 }) {
-  const { fav, d, loaded } = item;
+  const { fav, d, loaded, hint } = item;
   return (
     <li className={`card tone-${d.tone}`}>
       <button className="card-btn" onClick={() => onOpen(fav)}>
@@ -269,6 +321,7 @@ function SingleCard({
           <div className="card-info">
             <div className="stop">{fav.stopName}</div>
             <div className="headsign">{fav.headsign}</div>
+            {hint && <div className={`walk-hint ${hint.late ? 'late' : ''}`}>{hint.text}</div>}
           </div>
         </div>
         <div className="eta">

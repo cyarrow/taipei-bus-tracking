@@ -1,4 +1,4 @@
-import type { Credentials, FavoriteStop, Group } from './types';
+import type { Credentials, FavoriteStop, Group, Settings } from './types';
 
 const KEY_CREDS = 'tdx.credentials';
 const KEY_FAVS = 'favorites';
@@ -36,3 +36,7 @@ const DEFAULT_GROUPS: Group[] = [
 
 export const loadGroups = () => read<Group[]>(KEY_GROUPS, DEFAULT_GROUPS);
 export const saveGroups = (g: Group[]) => write(KEY_GROUPS, g);
+
+const KEY_SETTINGS = 'settings';
+export const loadSettings = () => ({ walkHint: true, ...read<Partial<Settings>>(KEY_SETTINGS, {}) });
+export const saveSettings = (s: Settings) => write(KEY_SETTINGS, s);

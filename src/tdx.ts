@@ -1,5 +1,15 @@
 import { loadCredentials, readJson, writeJson } from './storage';
-import type { BusPosition, City, Credentials, Eta, RouteInfo, StopOfRoute } from './types';
+import type {
+  BusGps,
+  BusPosition,
+  City,
+  Credentials,
+  Eta,
+  RouteInfo,
+  Shape,
+  Station,
+  StopOfRoute,
+} from './types';
 
 const AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
@@ -176,4 +186,42 @@ export function matchRoutes(index: RouteInfo[], query: string, limit = 40): Rout
       a.r.routeName.localeCompare(b.r.routeName, 'zh-Hant', { numeric: true }),
   );
   return scored.slice(0, limit).map((x) => x.r);
+}
+
+/** 公車 GPS 位置 */
+export async function fetchBusGps(city: City, routeName: string): Promise<BusGps[]> {
+  const list = await apiGet<BusGps[]>(
+    `/v2/Bus/RealTimeByFrequency/City/${city}/${enc(routeName)}`,
+  );
+  return list.filter((b) => b.RouteName.Zh_tw === routeName);
+}
+
+/** 路線形狀（WKT） */
+export async function fetchShape(city: City, routeName: string): Promise<Shape[]> {
+  return apiGet<Shape[]>(`/v2/Bus/Shape/City/${city}/${enc(routeName)}`);
+}
+
+/** 指定位置附近的站位（含經過的路線） */
+export async function fetchNearbyStations(
+  city: City,
+  lat: number,
+  lon: number,
+  radius: number,
+): Promise<Station[]> {
+  const f = encodeURIComponent(`nearby(${lat.toFixed(6)}, ${lon.toFixed(6)}, ${radius})`);
+  return apiGet<Station[]>(`/v2/Bus/Station/City/${city}?%24spatialFilter=${f}`);
+}
+
+/** 查詢多個站牌的預估到站時間 */
+export async function fetchEtaByStops(city: City, stopUIDs: string[]): Promise<Eta[]> {
+  if (stopUIDs.length === 0) return [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < stopUIDs.length; i += 40) chunks.push(stopUIDs.slice(i, i + 40));
+  const lists = await Promise.all(
+    chunks.map((c) => {
+      const f = encodeURIComponent(c.map((u) => `StopUID eq '${u}'`).join(' or '));
+      return apiGet<Eta[]>(`/v2/Bus/EstimatedTimeOfArrival/City/${city}?%24filter=${f}`);
+    }),
+  );
+  return lists.flat();
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { loadCredentials, saveCredentials } from '../storage';
+import { loadCredentials, loadSettings, saveCredentials, saveSettings } from '../storage';
 import { testCredentials, TdxError } from '../tdx';
 
 export default function Settings({ onDone }: { onDone: () => void }) {
@@ -8,6 +8,12 @@ export default function Settings({ onDone }: { onDone: () => void }) {
   const [clientSecret, setClientSecret] = useState(initial?.clientSecret ?? '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string }>();
+  const [prefs, setPrefs] = useState(loadSettings);
+  const setWalkHint = (walkHint: boolean) => {
+    const next = { ...prefs, walkHint };
+    setPrefs(next);
+    saveSettings(next);
+  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,6 +82,24 @@ export default function Settings({ onDone }: { onDone: () => void }) {
         {message && <p className={message.ok ? 'success' : 'error'}>{message.text}</p>}
         <p className="muted">申請網址：https://tdx.transportdata.tw（會員中心 → API 金鑰）</p>
       </form>
+
+      <section className="settings pref">
+        <h2>顯示</h2>
+        <label className="switch-row">
+          <span>
+            首頁顯示步行時間與建議出門時間
+            <small className="muted">
+              使用手機定位，以直線距離粗估步行時間（距離站牌 3 公里內才顯示）
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            checked={prefs.walkHint}
+            onChange={(e) => setWalkHint(e.target.checked)}
+          />
+        </label>
+        <p className="muted">地圖資料 © OpenStreetMap 貢獻者</p>
+      </section>
     </div>
   );
 }

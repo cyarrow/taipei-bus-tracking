@@ -5,6 +5,7 @@ import AddStop from './pages/AddStop';
 import Settings from './pages/Settings';
 import Groups from './pages/Groups';
 import RouteDetail from './pages/RouteDetail';
+import Nearby from './pages/Nearby';
 import { groupForNow } from './groups';
 import { loadCredentials, loadFavorites, loadGroups, saveFavorites, saveGroups } from './storage';
 import type { FavoriteStop, Group } from './types';
@@ -14,6 +15,7 @@ type View =
   | { name: 'add' }
   | { name: 'settings' }
   | { name: 'groups' }
+  | { name: 'nearby' }
   | { name: 'route'; fav: FavoriteStop };
 
 const autoTab = (groups: Group[]) => groupForNow(groups)?.id ?? ALL_TAB;
@@ -74,6 +76,17 @@ export default function App() {
       return <Settings onDone={back} />;
     case 'groups':
       return <Groups groups={groups} onChange={updateGroups} onBack={back} />;
+    case 'nearby':
+      return (
+        <Nearby
+          favorites={favorites}
+          groups={groups}
+          defaultGroupId={activeTab === ALL_TAB ? undefined : activeTab}
+          onAdd={(f) => updateFavorites([...favorites, f])}
+          onOpenRoute={(fav) => push({ name: 'route', fav })}
+          onBack={back}
+        />
+      );
     case 'route':
       return <RouteDetail fav={view.fav} favorites={favorites} onBack={back} />;
     case 'add':
@@ -98,6 +111,7 @@ export default function App() {
           onAdd={() => push({ name: 'add' })}
           onSettings={() => push({ name: 'settings' })}
           onGroups={() => push({ name: 'groups' })}
+          onNearby={() => push({ name: 'nearby' })}
         />
       );
   }

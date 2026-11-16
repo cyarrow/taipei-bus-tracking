@@ -23,7 +23,43 @@ export interface StopOfRoute {
     StopSequence: number;
     /** 站位 ID：同一個實體站位上不同路線的站牌會共用 */
     StationID?: string;
+    StopPosition?: Position;
   }[];
+}
+
+export interface Position {
+  PositionLat: number;
+  PositionLon: number;
+}
+
+/** TDX RealTimeByFrequency：公車 GPS 位置 */
+export interface BusGps {
+  PlateNumb: string;
+  RouteUID: string;
+  RouteName: NameType;
+  Direction: number;
+  BusPosition?: Position;
+  GPSTime?: string;
+}
+
+/** TDX Station：實體站位，含經過的路線 */
+export interface Station {
+  StationUID: string;
+  StationID: string;
+  StationName: NameType;
+  StationPosition: Position;
+  Stops: {
+    StopUID: string;
+    StopName: NameType;
+    RouteUID: string;
+    RouteName: NameType;
+  }[];
+}
+
+export interface Shape {
+  RouteUID: string;
+  Direction?: number;
+  Geometry: string;
 }
 
 /** 路線清單（搜尋建議用） */
@@ -77,6 +113,8 @@ export interface FavoriteStop {
   /** 站位 ID，用來合併同一站的多條路線 */
   stationID?: string;
   groupId?: string;
+  lat?: number;
+  lon?: number;
 }
 
 export interface Group {
@@ -85,6 +123,11 @@ export interface Group {
   /** 自動切換時段，格式 HH:MM */
   start?: string;
   end?: string;
+}
+
+export interface Settings {
+  /** 首頁顯示步行時間與建議出門時間 */
+  walkHint: boolean;
 }
 
 export interface Credentials {

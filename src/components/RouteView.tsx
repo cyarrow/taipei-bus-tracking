@@ -1,8 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { describeEta, pickBest } from '../eta';
-import { fetchBusPositions, fetchEta, fetchStopsOfRoute, TdxError } from '../tdx';
-import type { BusPosition, City, Eta, FavoriteStop, StopOfRoute } from '../types';
+import { distanceM, formatDistance, getLocation, openWalkingNav, walkMinutes, type LatLon } from '../geo';
+import {
+  fetchBusGps,
+  fetchBusPositions,
+  fetchEta,
+  fetchShape,
+  fetchStopsOfRoute,
+  TdxError,
+} from '../tdx';
+import type { BusGps, BusPosition, City, Eta, FavoriteStop, Shape, StopOfRoute } from '../types';
 import { usePolling } from '../usePolling';
+import BusMap, { parseWkt, type MapStop } from './BusMap';
 
 export interface StopPick {
   city: City;
@@ -13,6 +22,8 @@ export interface StopPick {
   stopUID: string;
   stopName: string;
   stationID?: string;
+  lat?: number;
+  lon?: number;
 }
 
 interface Props {
@@ -42,6 +53,10 @@ export default function RouteView(props: Props) {
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState<Date>();
+  const [mode, setMode] = useState<'list' | 'map'>('list');
+  const [gps, setGps] = useState<BusGps[]>([]);
+  const [shapes, setShapes] = useState<Shape[]>();
+  const [me, setMe] = useState<LatLon>();
   const highlightRef = useRef<HTMLLIElement>(null);
   const scrolled = useRef(false);
 
@@ -85,16 +100,43 @@ export default function RouteView(props: Props) {
     };
   }, [city, routeName, routeUID, initialDirection, highlightStopUID]);
 
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+
+  // 切到地圖時載入路線形狀與公車 GPS
+  useEffect(() => {
+    if (mode !== 'map') return;
+    fetchBusGps(city, routeName)
+      .then((g) => setGps(g.filter((x) => x.RouteUID === routeUID)))
+      .catch(() => {});
+    if (!shapes) {
+      fetchShape(city, routeName)
+        .then((sh) => setShapes(sh.filter((x) => x.RouteUID === routeUID)))
+        .catch(() => setShapes([]));
+    }
+  }, [mode, city, routeName, routeUID, shapes]);
+
+  // 取得目前位置（用於步行時間與地圖），失敗就略過
+  useEffect(() => {
+    getLocation()
+      .then(setMe)
+      .catch(() => {});
+  }, []);
+
   // 每 30 秒更新到站時間與公車位置
   usePolling(
     async () => {
       try {
-        const [e, b] = await Promise.all([
+        const [e, b, g] = await Promise.all([
           fetchEta(city, routeName),
           fetchBusPositions(city, routeName).catch(() => [] as BusPosition[]),
+          modeRef.current === 'map'
+            ? fetchBusGps(city, routeName).catch(() => [] as BusGps[])
+            : Promise.resolve(undefined),
         ]);
         setEtas(e.filter((x) => x.RouteUID === routeUID));
         setBuses(b.filter((x) => x.RouteUID === routeUID));
+        if (g) setGps(g.filter((x) => x.RouteUID === routeUID));
         setUpdatedAt(new Date());
       } catch (e) {
         setError(e instanceof TdxError ? e.message : '更新失敗');
@@ -143,6 +185,50 @@ export default function RouteView(props: Props) {
     return best;
   }, [buses, current, highlightStopUID]);
 
+  const hlStop = current?.route.Stops.find((s) => s.StopUID === highlightStopUID);
+  const hlPos: LatLon | undefined = hlStop?.StopPosition
+    ? { lat: hlStop.StopPosition.PositionLat, lon: hlStop.StopPosition.PositionLon }
+    : undefined;
+  const hlDist = hlPos && me ? distanceM(me, hlPos) : undefined;
+
+  const mapStops = useMemo<MapStop[]>(() => {
+    if (!current) return [];
+    return current.route.Stops.filter((s) => s.StopPosition).map((s) => {
+      const d = describeEta(pickBest(etaByStop.get(s.StopUID) ?? []));
+      return {
+        id: s.StopUID,
+        lat: s.StopPosition!.PositionLat,
+        lon: s.StopPosition!.PositionLon,
+        name: s.StopName.Zh_tw,
+        label: `${s.StopSequence}. ${s.StopName.Zh_tw}${etas.length ? `｜${d.text}` : ''}`,
+        highlight: s.StopUID === highlightStopUID,
+      };
+    });
+  }, [current, etaByStop, etas.length, highlightStopUID]);
+
+  const mapLines = useMemo<[number, number][][]>(() => {
+    if (!current) return [];
+    const forDir = shapes?.filter((x) => x.Direction === current.route.Direction) ?? [];
+    const use = forDir.length ? forDir : (shapes ?? []).filter((x) => x.Direction == null);
+    const parsed = use.flatMap((x) => parseWkt(x.Geometry));
+    if (parsed.length) return parsed;
+    return [mapStops.map((s) => [s.lat, s.lon] as [number, number])];
+  }, [shapes, current, mapStops]);
+
+  const mapBuses = useMemo(
+    () =>
+      current
+        ? gps
+            .filter((b) => b.Direction === current.route.Direction && b.BusPosition)
+            .map((b) => ({
+              plate: b.PlateNumb,
+              lat: b.BusPosition!.PositionLat,
+              lon: b.BusPosition!.PositionLon,
+            }))
+        : [],
+    [gps, current],
+  );
+
   useEffect(() => {
     if (!scrolled.current && highlightRef.current) {
       highlightRef.current.scrollIntoView({ block: 'center' });
@@ -185,17 +271,50 @@ export default function RouteView(props: Props) {
               ? `最近一班已在你的站（${nearest.plate}）`
               : `最近一班還有 ${nearest.stops} 站（${nearest.plate}）`
             : '目前沒有公車駛向你的站'}
+          {hlPos && (
+            <div className="nearest-walk">
+              <span>
+                {hlDist != null
+                  ? `距離 ${formatDistance(hlDist)}・步行約 ${walkMinutes(hlDist)} 分`
+                  : ''}
+              </span>
+              <button className="nav-btn" onClick={() => openWalkingNav(hlPos)}>
+                🚶 導航到站牌
+              </button>
+            </div>
+          )}
         </div>
       )}
+
+      <div className="segmented">
+        <button className={mode === 'list' ? 'active' : ''} onClick={() => setMode('list')}>
+          列表
+        </button>
+        <button className={mode === 'map' ? 'active' : ''} onClick={() => setMode('map')}>
+          地圖
+        </button>
+      </div>
 
       <div className="status-line">
         <span>
           {onPick ? '點選站牌加入我的站牌' : updatedAt ? `更新於 ${updatedAt.toLocaleTimeString('zh-TW', { hour12: false })}` : ''}
         </span>
-        <span className="legend">🚌 公車位置</span>
+        <span className="legend">{mode === 'map' ? '🚌 GPS 位置・🔵 我' : '🚌 公車位置'}</span>
       </div>
 
-      {current && (
+      {current && mode === 'map' && (
+        <BusMap
+          key={current.key}
+          stops={mapStops}
+          lines={mapLines}
+          buses={mapBuses}
+          me={me}
+          height="62vh"
+          fit={highlightStopUID ? 'highlight' : 'stops'}
+        />
+      )}
+
+      {current && mode === 'list' && (
         <ul className="stop-list">
           {current.route.Stops.map((s) => {
             const fav = isFav(s.StopUID);
@@ -238,6 +357,8 @@ export default function RouteView(props: Props) {
                         stopUID: s.StopUID,
                         stopName: s.StopName.Zh_tw,
                         stationID: s.StationID,
+                        lat: s.StopPosition?.PositionLat,
+                        lon: s.StopPosition?.PositionLon,
                       })
                     }
                   >

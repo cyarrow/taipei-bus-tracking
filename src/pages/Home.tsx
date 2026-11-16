@@ -1,85 +1,129 @@
-import { useCallback, useEffect, useState } from 'react';
-import { describeEta, pickBest } from '../eta';
-import { fetchEta, TdxError } from '../tdx';
-import type { Eta, FavoriteStop } from '../types';
-import type { View } from '../App';
+import { useCallback, useMemo, useState } from 'react';
+import { describeEta, pickBest, type EtaDisplay } from '../eta';
+import { fetchEta, fetchStopsOfRoute, TdxError } from '../tdx';
+import type { Eta, FavoriteStop, Group } from '../types';
+import { usePolling } from '../usePolling';
 
 const REFRESH_MS = 30_000;
+export const ALL_TAB = '__all__';
 
 interface Props {
   favorites: FavoriteStop[];
+  groups: Group[];
+  activeTab: string;
+  onTab: (t: string) => void;
   onChange: (f: FavoriteStop[]) => void;
-  onNavigate: (v: View) => void;
+  onOpenRoute: (f: FavoriteStop) => void;
+  onAdd: () => void;
+  onSettings: () => void;
+  onGroups: () => void;
 }
 
-export default function Home({ favorites, onChange, onNavigate }: Props) {
+interface Card {
+  key: string;
+  stopName: string;
+  items: { fav: FavoriteStop; d: EtaDisplay; loaded: boolean }[];
+}
+
+export default function Home(props: Props) {
+  const { favorites, groups, activeTab, onTab, onChange, onOpenRoute } = props;
   const [etas, setEtas] = useState<Record<string, Eta | undefined>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
   const [updatedAt, setUpdatedAt] = useState<Date>();
   const [editing, setEditing] = useState(false);
 
+  const visible = useMemo(
+    () =>
+      activeTab === ALL_TAB ? favorites : favorites.filter((f) => f.groupId === activeTab),
+    [favorites, activeTab],
+  );
+
   const refresh = useCallback(async () => {
     if (favorites.length === 0) return;
     setLoading(true);
     setError(undefined);
     try {
-      // 同一條路線只查一次
-      const groups = new Map<string, FavoriteStop[]>();
+      // 同一條路線只查一次（全部站牌都更新，切換分頁時不用重抓）
+      const byRoute = new Map<string, FavoriteStop[]>();
       for (const f of favorites) {
         const k = `${f.city}|${f.routeName}`;
-        groups.set(k, [...(groups.get(k) ?? []), f]);
+        byRoute.set(k, [...(byRoute.get(k) ?? []), f]);
       }
       const next: Record<string, Eta | undefined> = {};
+      const stationFix = new Map<string, string>();
       await Promise.all(
-        [...groups.values()].map(async (favs) => {
-          const rows = await fetchEta(favs[0].city, favs[0].routeName);
+        [...byRoute.values()].map(async (favs) => {
+          const { city, routeName } = favs[0];
+          const rows = await fetchEta(city, routeName);
           for (const f of favs) {
             next[f.id] = pickBest(
               rows.filter(
                 (r) =>
-                  r.StopUID === f.stopUID &&
-                  r.Direction === f.direction &&
-                  r.RouteUID === f.routeUID,
+                  r.StopUID === f.stopUID && r.Direction === f.direction && r.RouteUID === f.routeUID,
               ),
             );
+          }
+          // 舊版加入的站牌沒有站位 ID，補上以便合併同站路線
+          if (favs.some((f) => f.stationID === undefined)) {
+            const sor = await fetchStopsOfRoute(city, routeName).catch(() => []);
+            for (const f of favs) {
+              if (f.stationID !== undefined) continue;
+              const stop = sor
+                .filter((r) => r.RouteUID === f.routeUID && r.Direction === f.direction)
+                .flatMap((r) => r.Stops)
+                .find((s) => s.StopUID === f.stopUID);
+              stationFix.set(f.id, stop?.StationID ?? '');
+            }
           }
         }),
       );
       setEtas(next);
       setUpdatedAt(new Date());
+      if (stationFix.size > 0) {
+        onChange(
+          favorites.map((f) =>
+            stationFix.has(f.id) ? { ...f, stationID: stationFix.get(f.id) } : f,
+          ),
+        );
+      }
     } catch (e) {
       setError(e instanceof TdxError ? e.message : '更新失敗');
     } finally {
       setLoading(false);
     }
-  }, [favorites]);
+  }, [favorites, onChange]);
 
-  // 畫面顯示時每 30 秒自動更新；App 切到背景時暫停
-  useEffect(() => {
-    refresh();
-    let timer = window.setInterval(refresh, REFRESH_MS);
-    const onVisibility = () => {
-      window.clearInterval(timer);
-      if (document.visibilityState === 'visible') {
-        refresh();
-        timer = window.setInterval(refresh, REFRESH_MS);
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [refresh]);
+  usePolling(refresh, REFRESH_MS, favorites.length > 0);
 
-  const move = (i: number, d: -1 | 1) => {
-    const j = i + d;
-    if (j < 0 || j >= favorites.length) return;
+  // 同一個站位（StationID）的不同路線合併成一張卡片
+  const cards = useMemo<Card[]>(() => {
+    const map = new Map<string, Card>();
+    for (const f of visible) {
+      const key = f.stationID ? `st:${f.city}:${f.stationID}` : `uid:${f.id}`;
+      const card = map.get(key) ?? { key, stopName: f.stopName, items: [] };
+      card.items.push({ fav: f, d: describeEta(etas[f.id]), loaded: !!updatedAt });
+      map.set(key, card);
+    }
+    for (const c of map.values()) c.items.sort((a, b) => a.d.sortKey - b.d.sortKey);
+    return [...map.values()];
+  }, [visible, etas, updatedAt]);
+
+  const move = (f: FavoriteStop, d: -1 | 1) => {
+    const vi = visible.indexOf(f);
+    const other = visible[vi + d];
+    if (!other) return;
     const next = [...favorites];
+    const i = next.indexOf(f);
+    const j = next.indexOf(other);
     [next[i], next[j]] = [next[j], next[i]];
     onChange(next);
   };
+
+  const setGroup = (f: FavoriteStop, groupId: string) =>
+    onChange(favorites.map((x) => (x.id === f.id ? { ...x, groupId: groupId || undefined } : x)));
+
+  const tabs = [{ id: ALL_TAB, name: '全部' }, ...groups];
 
   return (
     <div className="page">
@@ -91,11 +135,26 @@ export default function Home({ favorites, onChange, onNavigate }: Props) {
               {editing ? '完成' : '編輯'}
             </button>
           )}
-          <button className="icon-btn" aria-label="設定" onClick={() => onNavigate('settings')}>
+          <button className="icon-btn" aria-label="設定" onClick={props.onSettings}>
             ⚙
           </button>
         </div>
       </header>
+
+      <div className="tabs">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            className={`tab ${t.id === activeTab ? 'active' : ''}`}
+            onClick={() => onTab(t.id)}
+          >
+            {t.name}
+          </button>
+        ))}
+        <button className="tab tab-ghost" onClick={props.onGroups}>
+          管理分組
+        </button>
+      </div>
 
       <div className="status-line">
         {error ? (
@@ -107,7 +166,9 @@ export default function Home({ favorites, onChange, onNavigate }: Props) {
           </span>
         ) : loading ? (
           <span>載入中…</span>
-        ) : null}
+        ) : (
+          <span />
+        )}
         {favorites.length > 0 && (
           <button className="text-btn" onClick={refresh} disabled={loading}>
             重新整理
@@ -115,59 +176,106 @@ export default function Home({ favorites, onChange, onNavigate }: Props) {
         )}
       </div>
 
-      {favorites.length === 0 ? (
+      {visible.length === 0 ? (
         <div className="empty">
-          <p>還沒有加入任何站牌</p>
+          <p>{favorites.length === 0 ? '還沒有加入任何站牌' : '這個分組還沒有站牌'}</p>
           <p className="muted">按下方「＋ 新增站牌」，搜尋路線並選擇你的上車站</p>
         </div>
+      ) : editing ? (
+        <ul className="cards">
+          {visible.map((f, i) => (
+            <li key={f.id} className="card edit-card">
+              <div className="edit-top">
+                <div className="route small">{f.routeName}</div>
+                <div className="card-info">
+                  <div className="stop">{f.stopName}</div>
+                  <div className="headsign">{f.headsign}</div>
+                </div>
+              </div>
+              <div className="edit-actions">
+                <select value={f.groupId ?? ''} onChange={(e) => setGroup(f, e.target.value)}>
+                  <option value="">不分組</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+                <button className="icon-btn" aria-label="上移" onClick={() => move(f, -1)} disabled={i === 0}>
+                  ↑
+                </button>
+                <button
+                  className="icon-btn"
+                  aria-label="下移"
+                  onClick={() => move(f, 1)}
+                  disabled={i === visible.length - 1}
+                >
+                  ↓
+                </button>
+                <button
+                  className="danger-btn"
+                  onClick={() => onChange(favorites.filter((x) => x.id !== f.id))}
+                >
+                  刪除
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : (
         <ul className="cards">
-          {favorites.map((f, i) => {
-            const d = describeEta(etas[f.id]);
-            return (
-              <li key={f.id} className={`card tone-${d.tone}`}>
-                <div className="card-main">
-                  <div className="route">{f.routeName}</div>
-                  <div className="card-info">
-                    <div className="stop">{f.stopName}</div>
-                    <div className="headsign">{f.headsign}</div>
-                  </div>
-                </div>
-                {editing ? (
-                  <div className="edit-actions">
-                    <button className="icon-btn" aria-label="上移" onClick={() => move(i, -1)} disabled={i === 0}>
-                      ↑
-                    </button>
-                    <button
-                      className="icon-btn"
-                      aria-label="下移"
-                      onClick={() => move(i, 1)}
-                      disabled={i === favorites.length - 1}
-                    >
-                      ↓
-                    </button>
-                    <button
-                      className="danger-btn"
-                      onClick={() => onChange(favorites.filter((x) => x.id !== f.id))}
-                    >
-                      刪除
-                    </button>
-                  </div>
-                ) : (
-                  <div className="eta">
-                    <div className="eta-text">{etas[f.id] || updatedAt ? d.text : '…'}</div>
-                    {d.sub && <div className="eta-sub">{d.sub}</div>}
-                  </div>
-                )}
+          {cards.map((c) =>
+            c.items.length === 1 ? (
+              <SingleCard key={c.key} item={c.items[0]} onOpen={onOpenRoute} />
+            ) : (
+              <li key={c.key} className={`card multi tone-${c.items[0].d.tone}`}>
+                <div className="multi-head">{c.stopName}</div>
+                {c.items.map(({ fav, d, loaded }) => (
+                  <button key={fav.id} className="multi-row" onClick={() => onOpenRoute(fav)}>
+                    <span className="route small">{fav.routeName}</span>
+                    <span className="headsign grow">{fav.headsign}</span>
+                    <span className={`eta-inline tone-${d.tone}`}>
+                      {loaded ? d.text : '…'}
+                      {d.sub && <small> {d.sub}</small>}
+                    </span>
+                  </button>
+                ))}
               </li>
-            );
-          })}
+            ),
+          )}
         </ul>
       )}
 
-      <button className="fab" onClick={() => onNavigate('add')}>
+      <button className="fab" onClick={props.onAdd}>
         ＋ 新增站牌
       </button>
     </div>
+  );
+}
+
+function SingleCard({
+  item,
+  onOpen,
+}: {
+  item: Card['items'][number];
+  onOpen: (f: FavoriteStop) => void;
+}) {
+  const { fav, d, loaded } = item;
+  return (
+    <li className={`card tone-${d.tone}`}>
+      <button className="card-btn" onClick={() => onOpen(fav)}>
+        <div className="card-main">
+          <div className="route">{fav.routeName}</div>
+          <div className="card-info">
+            <div className="stop">{fav.stopName}</div>
+            <div className="headsign">{fav.headsign}</div>
+          </div>
+        </div>
+        <div className="eta">
+          <div className="eta-text">{loaded ? d.text : '…'}</div>
+          {d.sub && <div className="eta-sub">{d.sub}</div>}
+        </div>
+      </button>
+    </li>
   );
 }

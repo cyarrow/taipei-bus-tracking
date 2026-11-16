@@ -21,7 +21,30 @@ export interface StopOfRoute {
     StopUID: string;
     StopName: NameType;
     StopSequence: number;
+    /** 站位 ID：同一個實體站位上不同路線的站牌會共用 */
+    StationID?: string;
   }[];
+}
+
+/** 路線清單（搜尋建議用） */
+export interface RouteInfo {
+  city: City;
+  routeUID: string;
+  routeName: string;
+  departure: string;
+  destination: string;
+}
+
+/** TDX RealTimeNearStop：公車目前在哪一站 */
+export interface BusPosition {
+  PlateNumb: string;
+  RouteUID: string;
+  RouteName: NameType;
+  Direction: number;
+  StopUID: string;
+  StopSequence: number;
+  /** 0 離站 1 進站 */
+  A2EventType?: number;
 }
 
 /** TDX EstimatedTimeOfArrival 回傳的一筆資料 */
@@ -51,6 +74,17 @@ export interface FavoriteStop {
   headsign: string;
   stopUID: string;
   stopName: string;
+  /** 站位 ID，用來合併同一站的多條路線 */
+  stationID?: string;
+  groupId?: string;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  /** 自動切換時段，格式 HH:MM */
+  start?: string;
+  end?: string;
 }
 
 export interface Credentials {

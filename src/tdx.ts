@@ -1,5 +1,5 @@
 import { loadCredentials, readJson, writeJson } from './storage';
-import type { City, Credentials, Eta, StopOfRoute } from './types';
+import type { BusPosition, City, Credentials, Eta, RouteInfo, StopOfRoute } from './types';
 
 const AUTH_URL =
   'https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token';
@@ -111,13 +111,69 @@ export async function fetchEta(city: City, routeName: string): Promise<Eta[]> {
   return list.filter((e) => e.RouteName.Zh_tw === routeName);
 }
 
-/** 同時在台北市與新北市搜尋路線 */
-export async function searchRoute(
-  routeName: string,
-): Promise<{ city: City; routes: StopOfRoute[] }[]> {
-  const cities: City[] = ['Taipei', 'NewTaipei'];
-  const results = await Promise.all(
-    cities.map(async (city) => ({ city, routes: await fetchStopsOfRoute(city, routeName) })),
+/** 查詢路線上每台公車目前所在的站 */
+export async function fetchBusPositions(city: City, routeName: string): Promise<BusPosition[]> {
+  const list = await apiGet<BusPosition[]>(
+    `/v2/Bus/RealTimeNearStop/City/${city}/${enc(routeName)}`,
   );
-  return results.filter((r) => r.routes.length > 0);
+  return list.filter((b) => b.RouteName.Zh_tw === routeName);
+}
+
+const KEY_ROUTE_INDEX = 'routeIndex.v1';
+const ROUTE_INDEX_TTL = 7 * 24 * 3600 * 1000;
+
+interface RouteRow {
+  RouteUID: string;
+  RouteName: { Zh_tw: string };
+  DepartureStopNameZh?: string;
+  DestinationStopNameZh?: string;
+}
+
+/** 台北＋新北所有路線清單，快取 7 天 */
+export async function fetchRouteIndex(): Promise<RouteInfo[]> {
+  const cached = readJson<{ at: number; routes: RouteInfo[] } | null>(KEY_ROUTE_INDEX, null);
+  if (cached && Date.now() - cached.at < ROUTE_INDEX_TTL && cached.routes.length) {
+    return cached.routes;
+  }
+  const cities: City[] = ['Taipei', 'NewTaipei'];
+  const lists = await Promise.all(
+    cities.map(async (city) => {
+      const rows = await apiGet<RouteRow[]>(
+        `/v2/Bus/Route/City/${city}?%24select=RouteUID,RouteName,DepartureStopNameZh,DestinationStopNameZh`,
+      );
+      return rows.map<RouteInfo>((r) => ({
+        city,
+        routeUID: r.RouteUID,
+        routeName: r.RouteName.Zh_tw,
+        departure: r.DepartureStopNameZh ?? '',
+        destination: r.DestinationStopNameZh ?? '',
+      }));
+    }),
+  );
+  const routes = lists.flat();
+  writeJson(KEY_ROUTE_INDEX, { at: Date.now(), routes });
+  return routes;
+}
+
+/** 依關鍵字找路線：路線名稱完全符合 > 開頭符合 > 包含 > 起訖站名包含 */
+export function matchRoutes(index: RouteInfo[], query: string, limit = 40): RouteInfo[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const scored: { r: RouteInfo; score: number }[] = [];
+  for (const r of index) {
+    const name = r.routeName.toLowerCase();
+    let score = -1;
+    if (name === q) score = 0;
+    else if (name.startsWith(q)) score = 1;
+    else if (name.includes(q)) score = 2;
+    else if (r.departure.includes(query.trim()) || r.destination.includes(query.trim())) score = 3;
+    if (score >= 0) scored.push({ r, score });
+  }
+  scored.sort(
+    (a, b) =>
+      a.score - b.score ||
+      a.r.routeName.length - b.r.routeName.length ||
+      a.r.routeName.localeCompare(b.r.routeName, 'zh-Hant', { numeric: true }),
+  );
+  return scored.slice(0, limit).map((x) => x.r);
 }

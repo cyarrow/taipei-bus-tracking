@@ -1,11 +1,11 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { describeEta, pickBest, type EtaDisplay } from '../eta';
 import UpdateBanner from '../components/UpdateBanner';
 import type { UpdateInfo } from '../updater';
 import type { StationTarget } from './StationPage';
 import { distanceM, getLocation, walkMinutes, type LatLon } from '../geo';
 import { loadSettings } from '../storage';
-import { fetchEta, fetchStopsOfRoute, TdxError } from '../tdx';
+import { fetchEtaByStops, fetchStopsOfRoute, TdxError } from '../tdx';
 import type { Eta, FavoriteStop, Group } from '../types';
 import { usePolling } from '../usePolling';
 
@@ -89,18 +89,16 @@ export default function Home(props: Props) {
         .catch(() => setMe(undefined));
     }
     try {
-      // 同一條路線只查一次（全部站牌都更新，切換分頁時不用重抓）
-      const byRoute = new Map<string, FavoriteStop[]>();
-      for (const f of favorites) {
-        const k = `${f.city}|${f.routeName}`;
-        byRoute.set(k, [...(byRoute.get(k) ?? []), f]);
-      }
+      // 所有站牌合併查詢：每個縣市只送一次請求
+      const byCity = new Map<string, FavoriteStop[]>();
+      for (const f of favorites) byCity.set(f.city, [...(byCity.get(f.city) ?? []), f]);
       const next: Record<string, Eta | undefined> = {};
-      const stationFix = new Map<string, Partial<FavoriteStop>>();
       await Promise.all(
-        [...byRoute.values()].map(async (favs) => {
-          const { city, routeName } = favs[0];
-          const rows = await fetchEta(city, routeName);
+        [...byCity.values()].map(async (favs) => {
+          const rows = await fetchEtaByStops(
+            favs[0].city,
+            [...new Set(favs.map((f) => f.stopUID))],
+          );
           for (const f of favs) {
             next[f.id] = pickBest(
               rows.filter(
@@ -109,42 +107,50 @@ export default function Home(props: Props) {
               ),
             );
           }
-          // 舊版加入的站牌沒有站位 ID，補上以便合併同站路線
-          const need = favs.filter(
-            (f) => (f.stationID === undefined || f.lat == null) && !backfilled.has(f.id),
-          );
-          if (need.length) {
-            const sor = await fetchStopsOfRoute(city, routeName).catch(() => []);
-            for (const f of need) {
-              backfilled.add(f.id);
-              const stop = sor
-                .filter((r) => r.RouteUID === f.routeUID && r.Direction === f.direction)
-                .flatMap((r) => r.Stops)
-                .find((s) => s.StopUID === f.stopUID);
-              stationFix.set(f.id, {
-                stationID: f.stationID ?? stop?.StationID ?? '',
-                lat: stop?.StopPosition?.PositionLat,
-                lon: stop?.StopPosition?.PositionLon,
-              });
-            }
-          }
         }),
       );
       setEtas(next);
       setUpdatedAt(new Date());
-      if (stationFix.size > 0) {
-        onChange(
-          favorites.map((f) =>
-            stationFix.has(f.id) ? { ...f, ...stationFix.get(f.id) } : f,
-          ),
-        );
-      }
     } catch (e) {
       setError(e instanceof TdxError ? e.message : '更新失敗');
     } finally {
       setLoading(false);
     }
-  }, [favorites, onChange]);
+    backfillRef.current();
+  }, [favorites]);
+
+  // 舊版加入的站牌沒有站位 ID／座標，背景補上（不影響到站時間顯示）
+  const backfill = async () => {
+    const need = favorites.filter(
+      (f) => (f.stationID === undefined || f.lat == null) && !backfilled.has(f.id),
+    );
+    if (need.length === 0) return;
+    const fix = new Map<string, Partial<FavoriteStop>>();
+    const routes = new Map<string, FavoriteStop[]>();
+    for (const f of need) {
+      backfilled.add(f.id);
+      const k = `${f.city}|${f.routeName}`;
+      routes.set(k, [...(routes.get(k) ?? []), f]);
+    }
+    for (const favs of routes.values()) {
+      const sor = await fetchStopsOfRoute(favs[0].city, favs[0].routeName).catch(() => []);
+      for (const f of favs) {
+        const stop = sor
+          .filter((r) => r.RouteUID === f.routeUID && r.Direction === f.direction)
+          .flatMap((r) => r.Stops)
+          .find((s) => s.StopUID === f.stopUID);
+        fix.set(f.id, {
+          stationID: f.stationID ?? stop?.StationID ?? '',
+          lat: f.lat ?? stop?.StopPosition?.PositionLat,
+          lon: f.lon ?? stop?.StopPosition?.PositionLon,
+        });
+      }
+    }
+    onChange(favorites.map((f) => (fix.has(f.id) ? { ...f, ...fix.get(f.id) } : f)));
+  };
+  const backfillRef = useRef(backfill);
+  backfillRef.current = backfill;
+
 
   usePolling(refresh, REFRESH_MS, favorites.length > 0);
 

@@ -39,13 +39,19 @@ async function requestToken(creds: Credentials): Promise<CachedToken> {
   });
   let res: Response;
   try {
-    res = await fetch(AUTH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
-  } catch {
-    throw new TdxError('無法連線到 TDX，請確認網路連線');
+    res = await withTimeout(
+      fetch(AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      }),
+      REQUEST_TIMEOUT_MS,
+    );
+  } catch (e) {
+    throw e instanceof TdxError ? e : new TdxError('無法連線到 TDX，請確認網路連線');
+  }
+  if (res.status === 429) {
+    throw new TdxError('TDX 驗證太頻繁，請稍後再試', 429);
   }
   if (!res.ok) {
     throw new TdxError('TDX 金鑰驗證失敗，請確認 Client ID / Secret 是否正確', res.status);
@@ -166,19 +172,42 @@ async function apiGet<T>(path: string, opts: GetOptions = {}): Promise<T> {
   }
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_429_RETRIES = 3;
+const MAX_RETRY_WAIT_S = 5;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new TdxError('TDX 回應逾時，請稍後再試')), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 async function requestWithRetry<T>(path: string): Promise<T> {
   const sep = path.includes('?') ? '&' : '?';
   let authRetried = false;
   for (let attempt = 0; ; attempt++) {
-    const token = await getToken();
+    const token = await withTimeout(getToken(), REQUEST_TIMEOUT_MS);
     await acquire();
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}${path}${sep}%24format=JSON`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-      });
-    } catch {
-      throw new TdxError('無法連線到 TDX，請確認網路連線');
+      res = await withTimeout(
+        fetch(`${API_BASE}${path}${sep}%24format=JSON`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        }),
+        REQUEST_TIMEOUT_MS,
+      );
+    } catch (e) {
+      throw e instanceof TdxError ? e : new TdxError('無法連線到 TDX，請確認網路連線');
     } finally {
       release();
     }
@@ -188,13 +217,17 @@ async function requestWithRetry<T>(path: string): Promise<T> {
       continue;
     }
     if (res.status === 429) {
-      if (attempt < 4) {
-        // 依 Retry-After 或指數退避等待後重試
-        const ra = Number(res.headers.get('Retry-After'));
-        await sleep(ra > 0 ? ra * 1000 : 1000 * 2 ** attempt);
+      const ra = Number(res.headers.get('Retry-After')) || 0;
+      // 要求等很久代表額度用完，不要卡住畫面，直接告知
+      if (ra > MAX_RETRY_WAIT_S * 6) {
+        const min = Math.ceil(ra / 60);
+        throw new TdxError(`TDX 查詢額度暫時用完，約 ${min} 分鐘後恢復`, 429);
+      }
+      if (attempt < MAX_429_RETRIES) {
+        await sleep(Math.min(ra > 0 ? ra : 2 ** attempt, MAX_RETRY_WAIT_S) * 1000);
         continue;
       }
-      throw new TdxError('TDX 查詢太頻繁，請稍後再試', 429);
+      throw new TdxError('TDX 查詢太頻繁，請稍後再試（429）', 429);
     }
     if (res.status === 404) {
       return [] as unknown as T;
@@ -202,7 +235,7 @@ async function requestWithRetry<T>(path: string): Promise<T> {
     if (!res.ok) {
       throw new TdxError(`TDX 回應錯誤（${res.status}）`, res.status);
     }
-    return (await res.json()) as T;
+    return (await withTimeout(res.json(), REQUEST_TIMEOUT_MS)) as T;
   }
 }
 
